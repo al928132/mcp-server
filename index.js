@@ -21,7 +21,7 @@ import os from "os";
 // ------------------------------------
 
 // All notes are stored as .md files in this directory
-const NOTES_DIR = path.join(os.homedir(), "dev-notes");
+const NOTES_DIR = "C:\\al928132\\dig4503\\week4\\dev-notes-server";
 
 // ------------------------------------
 // Helper: slugify a title into a filename
