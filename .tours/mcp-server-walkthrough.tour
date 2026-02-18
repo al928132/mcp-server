@@ -1,0 +1,97 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "MCP Dev Notes Server Walkthrough",
+  "description": "A guided tour of how this MCP server works — from imports to stdio communication.",
+  "steps": [
+    {
+      "file": "index.js",
+      "line": 13,
+      "title": "2. Import: StdioServerTransport",
+      "description": "## The Communication Layer\n\n`StdioServerTransport` connects the server to **stdin/stdout**.\n\nClaude Code launches this server as a child process. It sends JSON-RPC messages to the process's stdin and reads responses from stdout. This transport class handles all of that plumbing.\n\nThis is why you should **never use `console.log()`** in an MCP server — it would write to stdout and corrupt the JSON-RPC stream. Use `console.error()` for debugging instead."
+    },
+    {
+      "file": "index.js",
+      "line": 12,
+      "title": "1. Import: McpServer",
+      "description": "## The Core Server Class\n\n`McpServer` is the main class from the MCP SDK. It handles the entire Model Context Protocol for you:\n\n- Receiving JSON-RPC requests from Claude Code\n- Routing requests to the correct tool handler\n- Sending responses back\n\nThink of it as an Express app, but instead of HTTP routes, you register **tools** that Claude can call."
+    },
+    {
+      "file": "index.js",
+      "line": 14,
+      "title": "3. Import: Zod",
+      "description": "## Parameter Validation\n\n`z` is the Zod schema validation library (bundled with the MCP SDK — no extra install needed).\n\nZod defines what parameters each tool accepts. For example:\n- `z.string()` — must be a string\n- `z.number()` — must be a number\n- `z.string().describe(\"...\")` — adds a description so Claude knows what the parameter is for\n\nThe SDK validates inputs automatically before your handler runs, so you never have to check types yourself."
+    },
+    {
+      "file": "index.js",
+      "line": 15,
+      "title": "4. Import: Node.js Built-ins",
+      "description": "## File System and Path Utilities\n\n- **`fs/promises`** — Async file operations (read, write, mkdir, readdir)\n- **`path`** — Safe cross-platform path construction (`path.join()` handles `/` vs `\\`)\n- **`os`** — System info, specifically `os.homedir()` to resolve `~` to the user's home directory\n\nThese are all built into Node.js — no installation required."
+    },
+    {
+      "file": "index.js",
+      "line": 52,
+      "title": "5. Server Initialization",
+      "description": "## Creating the MCP Server\n\n```js\nconst server = new McpServer({ name, version })\n```\n\nThis creates the server instance with an identity. During the initial handshake with Claude Code, the server sends its `name` and `version` so the client knows what it connected to.\n\nAfter this line, the server exists but isn't doing anything yet — it's waiting for you to register tools and then connect a transport."
+    },
+    {
+      "file": "index.js",
+      "line": 63,
+      "title": "6. Registering a Tool: server.tool()",
+      "description": "## The Tool Registration Pattern\n\n`server.tool()` takes **four arguments**:\n\n1. **Name** (`\"save_note\"`) — The identifier Claude uses to call this tool\n2. **Description** (`\"Save a markdown note...\"`) — Helps Claude decide *when* to use it\n3. **Parameter schema** (`{ title: z.string(), ... }`) — Zod schema defining accepted inputs\n4. **Handler function** (`async ({ title, content }) => { ... }`) — The code that runs\n\nThis pattern is the same for all three tools. The only difference is the schema and handler."
+    },
+    {
+      "file": "index.js",
+      "line": 69,
+      "title": "7. Tool Parameters with Zod",
+      "description": "## Defining Parameters\n\n```js\ntitle: z.string().describe(\"The title of the note\")\ncontent: z.string().describe(\"The markdown content of the note\")\n```\n\nEach key becomes a named parameter. The `.describe()` call adds documentation that Claude reads to understand what value to pass.\n\nFor `list_notes` (line 102), the schema is just `{}` — meaning no parameters."
+    },
+    {
+      "file": "index.js",
+      "line": 44,
+      "title": "8. save_note Step 1: Ensure Directory Exists",
+      "description": "## Creating ~/dev-notes/ If Needed\n\n```js\nawait fs.mkdir(NOTES_DIR, { recursive: true })\n```\n\nThe `recursive: true` flag does two things:\n1. Creates the directory if it doesn't exist\n2. Does **not** throw an error if it already exists\n\nThis is called at the start of every tool handler, so the directory is always guaranteed to exist before any file operation."
+    },
+    {
+      "file": "index.js",
+      "line": 32,
+      "title": "9. save_note Step 2: Slugify the Title",
+      "description": "## Converting Titles to Filenames\n\nThe `slugify()` function transforms a human-readable title into a safe filename:\n\n```\n\"Project Ideas\"  →  \"project-ideas\"\n\"My Notes (v2)\"  →  \"my-notes-v2\"\n```\n\nThree transforms happen in order:\n1. `.toLowerCase()` — normalize case\n2. `.replace(/[^a-z0-9\\s-]/g, \"\")` — strip special characters\n3. `.replace(/\\s+/g, \"-\")` — replace spaces with hyphens\n\nThis same function is used by `read_note` to find the file again — same title always produces the same filename."
+    },
+    {
+      "file": "index.js",
+      "line": 78,
+      "title": "10. save_note Step 3: Write the File",
+      "description": "## Writing to Disk\n\n```js\nawait fs.writeFile(filepath, content, \"utf-8\")\n```\n\nThis writes the note content to the file. If the file already exists, it gets overwritten with the new content. The `\"utf-8\"` encoding ensures proper text handling for all characters."
+    },
+    {
+      "file": "index.js",
+      "line": 82,
+      "title": "11. Tool Return Format",
+      "description": "## How Tools Return Results\n\nEvery tool **must** return an object with a `content` array:\n\n```js\nreturn {\n  content: [{ type: \"text\", text: \"Note saved as project-ideas.md\" }]\n}\n```\n\nThe MCP protocol supports different content types (`text`, `image`, `resource`), but `text` is the most common. Claude reads this response to know what happened.\n\nFor errors (see `read_note` at line 163), you can add `isError: true` to signal failure."
+    },
+    {
+      "file": "index.js",
+      "line": 98,
+      "title": "12. Registering list_notes (No Parameters)",
+      "description": "## A Tool with No Parameters\n\nNotice the schema is just an empty object `{}` on line 102. This means Claude can call `list_notes` without providing any arguments.\n\nThe handler reads the directory, filters for `.md` files, and uses `fs.stat()` to get the last-modified date for each file."
+    },
+    {
+      "file": "index.js",
+      "line": 143,
+      "title": "13. Registering read_note (Error Handling)",
+      "description": "## A Tool That Can Fail\n\n`read_note` wraps its file read in a `try/catch`. If the file doesn't exist, it returns:\n\n```js\n{ isError: true, content: [{ type: \"text\", text: \"Note not found: ...\" }] }\n```\n\nThe `isError: true` flag tells Claude Code that the tool call failed, so Claude can inform the user rather than treating the error message as normal content."
+    },
+    {
+      "file": "index.js",
+      "line": 182,
+      "title": "14. Connecting the Transport",
+      "description": "## Starting the Server\n\n```js\nconst transport = new StdioServerTransport();\nawait server.connect(transport);\n```\n\nThis is where everything comes together:\n\n1. `StdioServerTransport` hooks into the process's **stdin** and **stdout**\n2. `server.connect(transport)` links the MCP server to the transport\n3. The server performs a handshake with Claude Code (exchanging name, version, capabilities)\n4. Then it sits in a loop, waiting for tool call requests on stdin\n\nThe process stays alive until Claude Code terminates it."
+    },
+    {
+      "file": "index.js",
+      "line": 188,
+      "title": "15. Error Handling at Startup",
+      "description": "## Catching Startup Failures\n\n```js\nmain().catch((err) => {\n  console.error(\"Server failed to start:\", err);\n  process.exit(1);\n});\n```\n\nIf anything goes wrong during startup (e.g., the SDK fails to initialize), the error is logged to **stderr** (not stdout — that would break the JSON-RPC stream) and the process exits with code 1.\n\n---\n\n🎉 **That's the complete MCP server!** The key takeaways:\n- `McpServer` + `StdioServerTransport` handle all protocol details\n- Tools are registered with a name, description, Zod schema, and handler\n- Handlers do normal Node.js work and return `{ content: [...] }`\n- Communication happens over stdin/stdout using JSON-RPC"
+    }
+  ]
+}
